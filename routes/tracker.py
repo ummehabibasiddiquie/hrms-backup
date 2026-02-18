@@ -19,7 +19,7 @@ UPLOAD_URL_PREFIX = "/uploads"
 def calculate_targets(base_target, user_tenure):
     user_tenure = float(user_tenure)
     base_target = float(base_target)
-    actual_target = base_target * 1
+    actual_target = round(base_target * 1, 2)
     tenure_target = round(base_target * user_tenure, 2)
     return actual_target, tenure_target
 
@@ -177,6 +177,7 @@ def add_tracker():
             return api_response(404, "Task not found")
 
         actual_target = task_row["task_target"]
+        actual_billable_hours = production / actual_target if actual_target else 0
         task_name = task_row.get("task_name") or "Task"
 
         # --- get project_code
@@ -201,17 +202,18 @@ def add_tracker():
                 return api_response(400, str(e))
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tracker_note = form.get("tracker_note")  # optional, can be null
 
         cursor.execute(
             """
             INSERT INTO task_work_tracker
-            (project_id, task_id, user_id, production, actual_target, tenure_target, billable_hours,
-             tracker_file, is_active, date_time, updated_date)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            (project_id, task_id, user_id, production, actual_target, tenure_target, billable_hours, actual_billable_hours,
+             tracker_file, tracker_note, is_active, date_time, updated_date)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 project_id, task_id, user_id, production, actual_target, tenure_target,
-                billable_hours, tracker_file, 1, now, now
+                billable_hours, actual_billable_hours, tracker_file, tracker_note, 1, now, now
             ),
         )
         conn.commit()
@@ -269,6 +271,7 @@ def update_tracker():
 
         # compute targets (keep your existing calculate_targets)
         actual_target, tenure_target = calculate_targets(base_target, user_row["user_tenure"])
+        actual_billable_hours = production / actual_target if actual_target else 0
 
         tracker_file = old_file
         uploaded = request.files.get("tracker_file")
@@ -311,6 +314,7 @@ def update_tracker():
             tracker_file = new_file
 
         updated_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tracker_note = form.get("tracker_note", tracker.get("tracker_note"))  # optional, keep existing if not provided
 
         cursor.execute(
             """
@@ -319,7 +323,9 @@ def update_tracker():
                 actual_target=%s,
                 tenure_target=%s,
                 billable_hours=(%s / NULLIF(%s, 0)),
+                actual_billable_hours=%s,
                 tracker_file=%s,
+                tracker_note=%s,
                 updated_date=%s
             WHERE tracker_id=%s
             """,
@@ -329,7 +335,9 @@ def update_tracker():
                 tenure_target,
                 production,
                 tenure_target,
+                actual_billable_hours,
                 tracker_file,
+                tracker_note,
                 updated_date,
                 tracker_id,
             ),
