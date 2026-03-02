@@ -1,4 +1,3 @@
-
 # routes/qc_afd.py
 
 from flask import Blueprint, request
@@ -13,353 +12,479 @@ def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# -----------------------------
-# ADD (supports single or bulk insert)
-# -----------------------------
+# ---------------------------------------------------------
+# ADD (Single / Bulk / Category + Subcategory Supported)
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# ADD MASTER + MULTIPLE CATEGORIES + SUBCATEGORIES
+# ---------------------------------------------------------
 @qc_afd_bp.route("/add", methods=["POST"])
 def add_qc_afd():
-    """
-    Accepts either:
-      - Single object: {"afd_id": 1, "afd_name": "...", "afd_points": 10, "afd_category_id": 1}
-      - Array of objects: [{...}, {...}]
-    """
-    raw_data = request.get_json(silent=True)
 
-    # Normalize to list
-    if isinstance(raw_data, list):
-        records = raw_data
-    elif isinstance(raw_data, dict):
-        records = [raw_data]
-    else:
-        return api_response(400, "Invalid JSON payload")
+    data = request.get_json() or {}
 
-    if not records:
-        return api_response(400, "No records provided")
+    master_afd_name = data.get("master_afd_name")
+    categories = data.get("categories", [])
 
-    # Validate all records first
-    for idx, data in enumerate(records):
-        if not data.get("afd_name"):
-            return api_response(400, f"Record {idx + 1}: afd_name is required")
-        if data.get("afd_points") in [None, ""]:
-            return api_response(400, f"Record {idx + 1}: afd_points is required")
-        if data.get("afd_category_id") in [None, ""]:
-            return api_response(400, f"Record {idx + 1}: afd_category_id is required")
+    if not master_afd_name:
+        return api_response(400, "master_afd_name is required")
+
+    if not categories or not isinstance(categories, list):
+        return api_response(400, "categories list is required")
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
+        created_at = now_str()
+        updated_at = now_str()
+
+        # -------------------------------------------------
+        # STEP 1: Get or Create AFD MASTER
+        # -------------------------------------------------
+        cursor.execute(
+            "SELECT afd_id FROM afd WHERE afd_name=%s LIMIT 1",
+            (master_afd_name.strip(),)
+        )
+        master = cursor.fetchone()
+
+        if master:
+            afd_id = master["afd_id"]
+        else:
+            cursor.execute("""
+                INSERT INTO afd (afd_name, created_at, updated_at)
+                VALUES (%s, %s, %s)
+            """, (master_afd_name.strip(), created_at, updated_at))
+            afd_id = cursor.lastrowid
+
         inserted_ids = []
-        skipped = []
 
-        for idx, data in enumerate(records):
-            afd_id = int(data.get("afd_id") or 1)  # default 1 if not provided
-            afd_name = str(data["afd_name"]).strip()
-            afd_points = int(data["afd_points"])
-            afd_category_id = int(data["afd_category_id"])
-            created_at = str(data.get("created_at") or now_str())
-            updated_at = str(data.get("updated_at") or now_str())
+        # -------------------------------------------------
+        # STEP 2: Insert Categories
+        # -------------------------------------------------
+        for idx, category in enumerate(categories):
 
-            # Check for duplicate (same afd_name + afd_category_id)
-            cursor.execute(
-                """
-                SELECT qc_afd_id
-                FROM qc_afd
-                WHERE afd_name=%s AND afd_category_id=%s
-                """,
-                (afd_name, afd_category_id)
-            )
+            cat_name = category.get("afd_name")
+            cat_points = category.get("afd_points")
+            subcategories = category.get("subcategories", [])
+
+            if not cat_name:
+                return api_response(400, f"Category {idx + 1}: afd_name is required")
+
+            if cat_points is None:
+                return api_response(400, f"Category {cat_name}: afd_points is required")
+
+            # Check duplicate category under same master
+            cursor.execute("""
+                SELECT qc_afd_id FROM qc_afd
+                WHERE afd_id=%s AND afd_name=%s AND afd_category_id=0
+            """, (afd_id, cat_name.strip()))
+
             if cursor.fetchone():
-                skipped.append({
-                    "index": idx + 1,
-                    "afd_name": afd_name,
-                    "afd_category_id": afd_category_id,
-                    "reason": "Already exists"
-                })
-                continue
+                return api_response(409, f"Category '{cat_name}' already exists")
 
-            cursor.execute(
-                """
+            # Insert category
+            cursor.execute("""
                 INSERT INTO qc_afd
-                    (afd_id, afd_name, afd_points, afd_category_id, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
                 (afd_id, afd_name, afd_points, afd_category_id, created_at, updated_at)
-            )
-            inserted_ids.append(cursor.lastrowid)
+                VALUES (%s, %s, %s, 0, %s, %s)
+            """, (
+                afd_id,
+                cat_name.strip(),
+                int(cat_points),
+                created_at,
+                updated_at
+            ))
+
+            category_id = cursor.lastrowid
+            inserted_ids.append(category_id)
+
+            # -------------------------------------------------
+            # STEP 3: Insert Subcategories
+            # -------------------------------------------------
+            for sub in subcategories:
+
+                sub_name = sub.get("afd_name")
+                sub_points = sub.get("afd_points")
+
+                if not sub_name:
+                    return api_response(400, f"Subcategory name required under {cat_name}")
+
+                if sub_points is None:
+                    return api_response(400, f"Subcategory points required for {sub_name}")
+
+                cursor.execute("""
+                    SELECT qc_afd_id FROM qc_afd
+                    WHERE afd_name=%s AND afd_category_id=%s
+                """, (sub_name.strip(), category_id))
+
+                if cursor.fetchone():
+                    return api_response(409, f"Subcategory '{sub_name}' already exists under '{cat_name}'")
+
+                cursor.execute("""
+                    INSERT INTO qc_afd
+                    (afd_id, afd_name, afd_points, afd_category_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (
+                    afd_id,
+                    sub_name.strip(),
+                    int(sub_points),
+                    category_id,
+                    created_at,
+                    updated_at
+                ))
+
+                inserted_ids.append(cursor.lastrowid)
 
         conn.commit()
 
-        # Response
-        if not inserted_ids and skipped:
-            return api_response(409, "No records inserted", {"skipped": skipped})
-
         return api_response(
             201,
-            f"{len(inserted_ids)} record(s) added successfully",
+            "AFD structure created successfully",
             {
-                "inserted_count": len(inserted_ids),
-                "qc_afd_ids": inserted_ids,
-                "skipped_count": len(skipped),
-                "skipped": skipped if skipped else None,
-            },
+                "master_afd_id": afd_id,
+                "inserted_qc_afd_ids": inserted_ids
+            }
         )
 
     except Exception as e:
         conn.rollback()
         return api_response(500, f"Add failed: {str(e)}")
+
     finally:
         cursor.close()
         conn.close()
 
 
-# -----------------------------
+# ---------------------------------------------------------
 # UPDATE
-# -----------------------------
-@qc_afd_bp.route("/update", methods=["POST"])
-def update_qc_afd():
-    data = request.get_json() or {}
+# ---------------------------------------------------------
+@qc_afd_bp.route("/update", methods=["PUT"])
+def update_full_qc_afd():
+    data = request.get_json(silent=True) or {}
 
-    if not data.get("qc_afd_id"):
-        return api_response(400, "qc_afd_id is required")
+    master_id = data.get("master_afd_id")
+    master_name = data.get("master_afd_name")
+    categories = data.get("categories", [])
 
-    qc_afd_id = int(data["qc_afd_id"])
-
-    updates = []
-    params = []
-
-    if "afd_id" in data and data["afd_id"] not in [None, ""]:
-        updates.append("afd_id=%s")
-        params.append(int(data["afd_id"]))
-
-    if "afd_name" in data and data["afd_name"] not in [None, ""]:
-        updates.append("afd_name=%s")
-        params.append(str(data["afd_name"]).strip())
-
-    if "afd_points" in data and data["afd_points"] not in [None, ""]:
-        updates.append("afd_points=%s")
-        params.append(int(data["afd_points"]))
-
-    if "afd_category_id" in data and data["afd_category_id"] not in [None, ""]:
-        updates.append("afd_category_id=%s")
-        params.append(int(data["afd_category_id"]))
-
-    if not updates:
-        return api_response(400, "No fields provided to update")
-
-    # Always update updated_at
-    updates.append("updated_at=%s")
-    params.append(now_str())
+    if not master_id:
+        return api_response(400, "master_afd_id is required")
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        # Check if record exists
-        cursor.execute(
-            "SELECT qc_afd_id, afd_name, afd_category_id FROM qc_afd WHERE qc_afd_id=%s",
-            (qc_afd_id,)
-        )
-        current = cursor.fetchone()
-        if not current:
-            return api_response(404, "Record not found")
+        # --------------------
+        # Validate Master
+        # --------------------
+        cursor.execute("SELECT afd_id FROM afd WHERE afd_id=%s", (master_id,))
+        if not cursor.fetchone():
+            return api_response(404, "Master AFD not found")
 
-        # Check for duplicate if updating afd_name or afd_category_id
-        if ("afd_name" in data and data["afd_name"] not in [None, ""]) or \
-           ("afd_category_id" in data and data["afd_category_id"] not in [None, ""]):
-            
-            final_afd_name = str(data["afd_name"]).strip() if ("afd_name" in data and data["afd_name"] not in [None, ""]) else current["afd_name"]
-            final_afd_category_id = int(data["afd_category_id"]) if ("afd_category_id" in data and data["afd_category_id"] not in [None, ""]) else current["afd_category_id"]
-
+        # --------------------
+        # Update Master
+        # --------------------
+        if master_name:
             cursor.execute(
-                """
-                SELECT qc_afd_id
-                FROM qc_afd
-                WHERE afd_name=%s AND afd_category_id=%s AND qc_afd_id<>%s
-                """,
-                (final_afd_name, final_afd_category_id, qc_afd_id)
+                "UPDATE afd SET afd_name=%s, updated_at=%s WHERE afd_id=%s",
+                (master_name, datetime.now(), master_id)
             )
-            if cursor.fetchone():
-                return api_response(409, "AFD with this name and category already exists")
 
-        params.append(qc_afd_id)
-        query = f"""
-            UPDATE qc_afd
-            SET {', '.join(updates)}
-            WHERE qc_afd_id=%s
-        """
-        cursor.execute(query, tuple(params))
+        # --------------------
+        # Update Categories
+        # --------------------
+        # --------------------
+        for cat in categories:
+
+            cat_id = cat.get("qc_afd_id")
+
+            # ==============================
+            # UPDATE CATEGORY
+            # ==============================
+            if cat_id:
+                cursor.execute(
+                    """UPDATE qc_afd 
+                    SET afd_name=%s, afd_points=%s, updated_at=%s
+                    WHERE qc_afd_id=%s AND afd_id=%s""",
+                    (
+                        cat.get("afd_name"),
+                        cat.get("afd_points"),
+                        datetime.now(),
+                        cat_id,
+                        master_id
+                    )
+                )
+            else:
+                # ==============================
+                # INSERT NEW CATEGORY
+                # ==============================
+                cursor.execute(
+                    """INSERT INTO qc_afd
+                    (afd_id, afd_name, afd_points, afd_category_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (
+                        master_id,
+                        cat.get("afd_name"),
+                        cat.get("afd_points"),
+                        0,  # category has no parent
+                        datetime.now(),
+                        datetime.now()
+                    )
+                )
+                cat_id = cursor.lastrowid  # important for subcategories
+
+            # --------------------
+            # Subcategories
+            # --------------------
+            subcategories = cat.get("subcategories", [])
+
+            for sub in subcategories:
+                sub_id = sub.get("qc_afd_id")
+
+                if sub_id:
+                    # UPDATE subcategory
+                    cursor.execute(
+                        """UPDATE qc_afd 
+                        SET afd_name=%s,
+                            afd_points=%s,
+                            afd_category_id=%s,
+                            updated_at=%s
+                        WHERE qc_afd_id=%s AND afd_id=%s""",
+                        (
+                            sub.get("afd_name"),
+                            sub.get("afd_points"),
+                            cat_id,
+                            datetime.now(),
+                            sub_id,
+                            master_id
+                        )
+                    )
+                else:
+                    # INSERT new subcategory
+                    cursor.execute(
+                        """INSERT INTO qc_afd
+                        (afd_id, afd_name, afd_points, afd_category_id, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)""",
+                        (
+                            master_id,
+                            sub.get("afd_name"),
+                            sub.get("afd_points"),
+                            cat_id,
+                            datetime.now(),
+                            datetime.now()
+                        )
+                    )
+
         conn.commit()
-
-        return api_response(200, "AFD updated successfully")
+        return api_response(200, "Master + Categories + Subcategories updated successfully")
 
     except Exception as e:
         conn.rollback()
         return api_response(500, f"Update failed: {str(e)}")
+
     finally:
         cursor.close()
         conn.close()
 
+# ---------------------------------------------------------
+# DELETE (Auto delete children if category)
+# ---------------------------------------------------------
 
-# -----------------------------
-# DELETE
-# -----------------------------
-@qc_afd_bp.route("/delete", methods=["POST"])
+@qc_afd_bp.route("/delete", methods=["DELETE"])
 def delete_qc_afd():
-    data = request.get_json() or {}
 
-    if not data.get("qc_afd_id"):
-        return api_response(400, "qc_afd_id is required")
+    data = request.get_json(silent=True) or {}
 
-    qc_afd_id = int(data["qc_afd_id"])
+    afd_ids = data.get("afd_ids", [])
+    qc_afd_ids = data.get("qc_afd_ids", [])
+
+    if not afd_ids and not qc_afd_ids:
+        return api_response(400, "afd_ids or qc_afd_ids is required")
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        cursor.execute(
-            "SELECT qc_afd_id FROM qc_afd WHERE qc_afd_id=%s",
-            (qc_afd_id,)
-        )
-        if not cursor.fetchone():
-            return api_response(404, "Record not found")
 
-        cursor.execute(
-            "DELETE FROM qc_afd WHERE qc_afd_id=%s",
-            (qc_afd_id,)
-        )
+        # ----------------------------------
+        # DELETE MULTIPLE MASTERS
+        # ----------------------------------
+        if afd_ids:
+            format_strings = ",".join(["%s"] * len(afd_ids))
+
+            # Delete children first
+            cursor.execute(
+                f"DELETE FROM qc_afd WHERE afd_id IN ({format_strings})",
+                tuple(afd_ids)
+            )
+
+            # Delete masters
+            cursor.execute(
+                f"DELETE FROM afd WHERE afd_id IN ({format_strings})",
+                tuple(afd_ids)
+            )
+
+        # ----------------------------------
+        # DELETE MULTIPLE CATEGORY / SUBCATEGORY
+        # ----------------------------------
+        if qc_afd_ids:
+            format_strings = ",".join(["%s"] * len(qc_afd_ids))
+
+            # Fetch records first
+            cursor.execute(
+                f"""
+                SELECT qc_afd_id, afd_category_id 
+                FROM qc_afd 
+                WHERE qc_afd_id IN ({format_strings})
+                """,
+                tuple(qc_afd_ids)
+            )
+
+            records = cursor.fetchall()
+
+            category_ids = []
+            subcategory_ids = []
+
+            for record in records:
+                if record["afd_category_id"] == 0 or record["afd_category_id"] is None:
+                    category_ids.append(record["qc_afd_id"])
+                else:
+                    subcategory_ids.append(record["qc_afd_id"])
+
+            # Delete subcategories of categories
+            if category_ids:
+                format_cat = ",".join(["%s"] * len(category_ids))
+                cursor.execute(
+                    f"DELETE FROM qc_afd WHERE afd_category_id IN ({format_cat})",
+                    tuple(category_ids)
+                )
+
+            # Delete selected categories + subcategories
+            cursor.execute(
+                f"DELETE FROM qc_afd WHERE qc_afd_id IN ({format_strings})",
+                tuple(qc_afd_ids)
+            )
+
         conn.commit()
-
-        return api_response(200, "AFD deleted successfully")
+        return api_response(200, "Records deleted successfully")
 
     except Exception as e:
         conn.rollback()
         return api_response(500, f"Delete failed: {str(e)}")
+
     finally:
         cursor.close()
         conn.close()
 
 
-# -----------------------------
-# LIST (with optional filters)
-# -----------------------------
 @qc_afd_bp.route("/list", methods=["POST"])
 def list_qc_afd():
-    data = request.get_json() or {}
-
-    params = []
-    where = "WHERE 1=1"
-
-    if data.get("qc_afd_id"):
-        where += " AND qc_afd_id=%s"
-        params.append(int(data["qc_afd_id"]))
-
-    if data.get("afd_id"):
-        where += " AND afd_id=%s"
-        params.append(int(data["afd_id"]))
-
-    if data.get("afd_category_id") is not None and data.get("afd_category_id") != "":
-        where += " AND afd_category_id=%s"
-        params.append(int(data["afd_category_id"]))
-
-    if data.get("afd_name"):
-        where += " AND afd_name LIKE %s"
-        params.append(f"%{data['afd_name']}%")
-
-    limit = int(data.get("limit") or 200)
-    offset = int(data.get("offset") or 0)
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        query = f"""
-            SELECT
-                qc_afd_id,
-                afd_id,
-                afd_name,
-                afd_points,
-                afd_category_id,
-                created_at,
-                updated_at
-            FROM qc_afd
-            {where}
-            ORDER BY afd_category_id ASC, qc_afd_id ASC
-            LIMIT %s OFFSET %s
-        """
-        cursor.execute(query, tuple(params + [limit, offset]))
-        rows = cursor.fetchall()
+        # -------------------------
+        # Fetch Masters
+        # -------------------------
+        cursor.execute("SELECT afd_id, afd_name FROM afd WHERE is_active=1")
+        masters = cursor.fetchall()
 
-        count_query = f"""
-            SELECT COUNT(*) AS total
+        # -------------------------
+        # Fetch All Categories/Subcategories
+        # -------------------------
+        cursor.execute("""
+            SELECT qc_afd_id, afd_id, afd_name, afd_points, afd_category_id
             FROM qc_afd
-            {where}
-        """
-        cursor.execute(count_query, tuple(params))
-        total = (cursor.fetchone() or {}).get("total", 0)
+        """)
+        qc_rows = cursor.fetchall()
 
-        return api_response(200, "Records fetched successfully", {
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "rows": rows
-        })
+        # -------------------------
+        # Build Hierarchy
+        # -------------------------
+        result = []
+
+        for master in masters:
+            master_dict = {
+                "afd_id": master["afd_id"],
+                "afd_name": master["afd_name"],
+                "categories": []
+            }
+
+            # Get categories (parent rows)
+            categories = [
+                row for row in qc_rows
+                if row["afd_id"] == master["afd_id"]
+                and (row["afd_category_id"] == 0 or row["afd_category_id"] is None)
+            ]
+
+            for cat in categories:
+                category_dict = {
+                    "qc_afd_id": cat["qc_afd_id"],
+                    "afd_name": cat["afd_name"],
+                    "afd_points": cat["afd_points"],
+                    "subcategories": []
+                }
+
+                # Get subcategories
+                subs = [
+                    row for row in qc_rows
+                    if row["afd_category_id"] == cat["qc_afd_id"]
+                ]
+
+                for sub in subs:
+                    category_dict["subcategories"].append({
+                        "qc_afd_id": sub["qc_afd_id"],
+                        "afd_name": sub["afd_name"],
+                        "afd_points": sub["afd_points"]
+                    })
+
+                master_dict["categories"].append(category_dict)
+
+            result.append(master_dict)
+
+        return api_response(200, "QC AFD list fetched successfully", result)
 
     except Exception as e:
-        return api_response(500, f"List failed: {str(e)}")
+        return api_response(500, f"Fetch failed: {str(e)}")
+
     finally:
         cursor.close()
         conn.close()
 
-
-# -----------------------------
-# LIST GROUPED BY CATEGORY
-# -----------------------------
+# ---------------------------------------------------------
+# LIST GROUPED PROPER HIERARCHY
+# ---------------------------------------------------------
 @qc_afd_bp.route("/list_by_category", methods=["POST"])
 def list_qc_afd_by_category():
-    """
-    Returns AFD items grouped by afd_category_id
-    """
-    data = request.get_json() or {}
-
-    params = []
-    where = "WHERE 1=1"
-
-    if data.get("afd_id"):
-        where += " AND afd_id=%s"
-        params.append(int(data["afd_id"]))
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        query = f"""
-            SELECT
-                qc_afd_id,
-                afd_id,
-                afd_name,
-                afd_points,
-                afd_category_id,
-                created_at,
-                updated_at
+        cursor.execute("""
+            SELECT *
             FROM qc_afd
-            {where}
             ORDER BY afd_category_id ASC, qc_afd_id ASC
-        """
-        cursor.execute(query, tuple(params))
+        """)
         rows = cursor.fetchall()
 
-        # Group by category
-        grouped = {}
+        categories = {}
         for row in rows:
-            cat_id = row["afd_category_id"]
-            if cat_id not in grouped:
-                grouped[cat_id] = []
-            grouped[cat_id].append(row)
+            if row["afd_category_id"] == 0:
+                categories[row["qc_afd_id"]] = {
+                    "category": row,
+                    "subcategories": []
+                }
+
+        for row in rows:
+            parent_id = row["afd_category_id"]
+            if parent_id != 0 and parent_id in categories:
+                categories[parent_id]["subcategories"].append(row)
 
         return api_response(200, "Records fetched successfully", {
-            "total": len(rows),
-            "categories": grouped
+            "total_categories": len(categories),
+            "data": list(categories.values())
         })
 
     except Exception as e:

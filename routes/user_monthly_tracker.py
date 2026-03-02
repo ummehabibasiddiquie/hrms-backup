@@ -229,7 +229,7 @@ def update_user_monthly_target():
 
     if "extra_assigned_hours" in data and data["extra_assigned_hours"] not in [None, ""]:
         updates.append("extra_assigned_hours=%s")
-        params.append(int(data["extra_assigned_hours"]))
+        params.append(int(data["extra_assigned_hours"])) 
 
     if "working_days" in data and data["working_days"] not in [None, ""]:
         updates.append("working_days=%s")
@@ -247,7 +247,7 @@ def update_user_monthly_target():
             """
             SELECT user_id, month_year
             FROM user_monthly_tracker
-            WHERE user_monthly_tracker_id=%s AND is_active=1
+            WHERE user_monthly_tracker_id=%s
             """,
             (umt_id,),
         )
@@ -289,7 +289,7 @@ def update_user_monthly_target():
                 """
                 SELECT user_monthly_tracker_id
                 FROM user_monthly_tracker
-                WHERE user_id=%s AND month_year=%s AND is_active=1
+                WHERE user_id=%s AND month_year=%s 
                   AND user_monthly_tracker_id<>%s
                 """,
                 (final_user_id, final_month_year, umt_id),
@@ -334,8 +334,7 @@ def delete_user_monthly_target():
     try:
         cursor.execute(
             """
-            UPDATE user_monthly_tracker
-            SET is_active=0
+            delete from user_monthly_tracker
             WHERE user_monthly_tracker_id=%s AND is_active=1
             """,
             (umt_id,),
@@ -412,15 +411,13 @@ def list_user_monthly_targets():
             mid = str(logged_in_user_id)
             user_where += """
                 AND (
-                    u.project_manager_id = %s
-                    OR u.asst_manager_id = %s
-                    OR u.qa_id = %s
-                    OR FIND_IN_SET(%s, REPLACE(u.project_manager_id, ' ', '')) > 0
-                    OR FIND_IN_SET(%s, REPLACE(u.asst_manager_id, ' ', '')) > 0
-                    OR FIND_IN_SET(%s, REPLACE(u.qa_id, ' ', '')) > 0
+                    JSON_CONTAINS(u.project_manager_id, %s)
+                    OR JSON_CONTAINS(u.asst_manager_id, %s)
+                    OR JSON_CONTAINS(u.qa_id, %s)
                 )
             """
-            user_params.extend([mid, mid, mid, mid, mid, mid])
+
+            user_params.extend([str(mid), str(mid), str(mid)])
 
         # ---------------- Joins: month_year optional ----------------
         # temp_qc.date is TEXT 'YYYY-MM-DD'

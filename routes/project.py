@@ -399,11 +399,13 @@ def list_projects():
 
         # ✅ Role-based project filtering
         base_query = """
-            SELECT project_id, project_name, project_code, project_description,
-                   project_team_id, project_manager_id, asst_project_manager_id, project_qa_id,
-                   project_pprt, created_date, updated_date
-            FROM project
-            WHERE is_active=1
+            SELECT p.project_id, p.project_name, p.project_code, p.project_description,
+                   p.project_team_id, p.project_manager_id, p.asst_project_manager_id, p.project_qa_id,
+                   p.project_pprt, p.project_category_id, pc.project_category_name,
+                   p.created_date, p.updated_date
+            FROM project p
+            LEFT JOIN project_category pc ON pc.project_category_id = p.project_category_id AND pc.is_active = 1
+            WHERE p.is_active=1
         """
         params = []
 
@@ -414,10 +416,10 @@ def list_projects():
             # Project manager sees projects they manage
             base_query += """
                 AND (
-                    TRIM(COALESCE(project_manager_id, '')) = %s
+                    TRIM(COALESCE(p.project_manager_id, '')) = %s
                     OR FIND_IN_SET(
                         %s,
-                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(project_manager_id,''), '[',''), ']',''), '"',''), ' ', '')
+                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.project_manager_id,''), '[',''), ']',''), '"',''), ' ', '')
                     ) > 0
                 )
             """
@@ -426,10 +428,10 @@ def list_projects():
             # Assistant manager sees projects where they are asst_project_manager
             base_query += """
                 AND (
-                    TRIM(COALESCE(asst_project_manager_id, '')) = %s
+                    TRIM(COALESCE(p.asst_project_manager_id, '')) = %s
                     OR FIND_IN_SET(
                         %s,
-                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(asst_project_manager_id,''), '[',''), ']',''), '"',''), ' ', '')
+                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.asst_project_manager_id,''), '[',''), ']',''), '"',''), ' ', '')
                     ) > 0
                 )
             """
@@ -438,10 +440,10 @@ def list_projects():
             # QA sees projects where they are project_qa
             base_query += """
                 AND (
-                    TRIM(COALESCE(project_qa_id, '')) = %s
+                    TRIM(COALESCE(p.project_qa_id, '')) = %s
                     OR FIND_IN_SET(
                         %s,
-                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(project_qa_id,''), '[',''), ']',''), '"',''), ' ', '')
+                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.project_qa_id,''), '[',''), ']',''), '"',''), ' ', '')
                     ) > 0
                 )
             """
@@ -450,16 +452,16 @@ def list_projects():
             # Agent sees projects where they are in project_team
             base_query += """
                 AND (
-                    TRIM(COALESCE(project_team_id, '')) = %s
+                    TRIM(COALESCE(p.project_team_id, '')) = %s
                     OR FIND_IN_SET(
                         %s,
-                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(project_team_id,''), '[',''), ']',''), '"',''), ' ', '')
+                        REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.project_team_id,''), '[',''), ']',''), '"',''), ' ', '')
                     ) > 0
                 )
             """
             params.extend([str(logged_in_user_id), str(logged_in_user_id)])
 
-        base_query += " ORDER BY project_id DESC"
+        base_query += " ORDER BY p.project_id DESC"
 
         cursor.execute(base_query, tuple(params))
         projects = cursor.fetchall()
@@ -479,7 +481,8 @@ def list_projects():
                 "project_team_id": json.loads(proj.get("project_team_id") or "[]"),
                 "asst_project_manager_id": json.loads(proj.get("asst_project_manager_id") or "[]"),
                 "project_qa_id": json.loads(proj.get("project_qa_id") or "[]"),
-                "project_category": proj["project_category"],
+                "project_category_id": proj.get("project_category_id"),
+                "project_category_name": proj.get("project_category_name"),
                 "project_files": project_files,
                 "created_date": proj["created_date"],
                 "updated_date": proj["updated_date"],

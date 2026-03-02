@@ -13,12 +13,13 @@ from routes.user_monthly_tracker import user_monthly_tracker_bp
 from routes.api_log_list import api_log_list_bp
 from routes.password_reset import password_reset_bp
 from routes.qc import qc_bp
-from routes.email_tracking import email_tracking_bp
 from routes.qc_afd import qc_afd_bp
+from scheduler import start_scheduler
 
 
 from flask_cors import CORS
 import os
+
 
 
 app = Flask(__name__)
@@ -40,13 +41,12 @@ app.register_blueprint(user_monthly_tracker_bp,url_prefix=f"/user_monthly_tracke
 app.register_blueprint(api_log_list_bp, url_prefix="/api_log_list")
 app.register_blueprint(password_reset_bp, url_prefix="/password_reset")
 app.register_blueprint(qc_bp, url_prefix="/qc")
-app.register_blueprint(email_tracking_bp, url_prefix="/email_tracking")
 app.register_blueprint(qc_afd_bp, url_prefix="/qc_afd")
 
-# print("\n==== REGISTERED ROUTES ====")
-# for r in app.url_map.iter_rules():
-#     print(r, r.methods)
-# print("==== END ROUTES ====\n")
+print("\n==== REGISTERED ROUTES ====")
+for r in app.url_map.iter_rules():
+    print(r, r.methods)
+print("==== END ROUTES ====\n")
 
 
 # CORS(app, supports_credentials=True)
@@ -57,6 +57,10 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 def home():
     return "Flask Auth API is running!"
 
+@app.route("/health")
+def health():
+    return "OK", 200
+
 @app.route("/uploads/<path:filename>")
 def serve_uploads(filename):
     from config import UPLOAD_FOLDER
@@ -64,5 +68,7 @@ def serve_uploads(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
 if __name__ == "__main__":
+    # Start the scheduler
+    start_scheduler()
     # app.run(debug=True)
     app.run(host="0.0.0.0", port=5000, debug=True)
