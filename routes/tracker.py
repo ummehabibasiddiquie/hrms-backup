@@ -1,4 +1,4 @@
-from flask import Blueprint, request
+from flask import Blueprint, request, url_for
 from config import get_db_connection, BASE_UPLOAD_URL, UPLOAD_SUBDIRS, UPLOAD_FOLDER
 from utils.response import api_response
 from utils.file_utils import save_base64_file  # kept (not used now in update)
@@ -628,10 +628,14 @@ def view_trackers():
         trackers = cursor.fetchall()
 
         # tracker_files_url = f"{BASE_UPLOAD_URL}/{UPLOAD_SUBDIRS['TRACKER_FILES']}/"
-        tracker_files_url = f"{UPLOAD_FOLDER}/{UPLOAD_SUBDIRS['TRACKER_FILES']}/"
+        # tracker_files_url = f"{UPLOAD_FOLDER}/{UPLOAD_SUBDIRS['TRACKER_FILES']}/"
         for t in trackers:
             tracker_file_temp = t.get("tracker_file")
-            t["tracker_file"] = (tracker_files_url + tracker_file_temp) if tracker_file_temp else None
+            if tracker_file_temp:
+                t["tracker_file"] = url_for("download_tracker_file", filename=tracker_file_temp, _external=True)
+            else:
+                t["tracker_file"] = None
+            # t["tracker_file"] = (tracker_files_url + tracker_file_temp) if tracker_file_temp else None
 
         # -----------------------------
         # Month-wise Summary
