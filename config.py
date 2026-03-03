@@ -11,10 +11,11 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 # Logical upload directory (no full path stored anywhere else)
 UPLOAD_DIR = "uploads"
 UPLOAD_FOLDER = os.path.join(BASE_DIR, UPLOAD_DIR)
+print(f"Upload folder set to: {UPLOAD_FOLDER}")
 
 # Web-accessible base URL for uploads (matches Nginx /python/ prefix)
-BASE_UPLOAD_URL = os.getenv("BASE_UPLOAD_URL", "/python/uploads")
-# BASE_UPLOAD_URL = os.getenv("BASE_UPLOAD_URL", "/uploads")
+# BASE_UPLOAD_URL = os.getenv("BASE_UPLOAD_URL", "/python/uploads")
+BASE_UPLOAD_URL = os.getenv("BASE_UPLOAD_URL", "/uploads")
 
 # Sub-folders for different file types
 UPLOAD_SUBDIRS = {
