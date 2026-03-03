@@ -212,8 +212,8 @@ def add_tracker():
         if now_str is None:
             print("Received date:", now_str)
             now = datetime.now()
-            # If NIGHT shift and time is between 00:00–06:00
-            if shift == "NIGHT" and now.hour < 6:
+            # If NIGHT shift and time is between 00:00–09:00
+            if shift == "NIGHT" and now.hour < 9:
                 adjusted_datetime = now - timedelta(days=1)
             else:
                 adjusted_datetime = now
@@ -486,8 +486,24 @@ def view_trackers():
         if not logged_in_user_id:
             return api_response(400, "logged_in_user_id is required")
 
-        # month_year default current month
-        month_year = normalize_month_year(data.get("month_year"))
+        # ---------- Smart Month Detection ----------
+        month_year = None
+
+        # 1️⃣ If date filter exists → derive month from date_to OR date_from
+        if data.get("date_from") or data.get("date_to"):
+            try:
+                ref_date = data.get("date_to") or data.get("date_from")
+                ref_date = str(ref_date)[:10]  # ensure YYYY-MM-DD
+                dt_obj = datetime.strptime(ref_date, "%Y-%m-%d")
+                month_year = dt_obj.strftime("%b%Y")
+            except Exception:
+                month_year = None
+
+        # 2️⃣ Else use explicit month_year
+        if not month_year:
+            month_year = normalize_month_year(data.get("month_year"))
+
+        # 3️⃣ Else fallback to current month
         if not month_year:
             cursor.execute("SELECT DATE_FORMAT(CURDATE(), '%b%Y') AS m")
             month_year = normalize_month_year((cursor.fetchone() or {}).get("m") or "")
@@ -495,19 +511,45 @@ def view_trackers():
         ctx = get_role_context(cursor, int(logged_in_user_id))
         role_name = ctx["user_role_name"]
 
+        # -----------------------------
+        # 🔹 Main Tracker Query
+        # -----------------------------
         query = """
             SELECT 
                 twt.*,
                 u.user_name,
+                u.user_email,
+
+                am.user_id AS assistant_manager_id,
+                am.user_name AS assistant_manager_name,
+                am.user_email AS assistant_manager_email,
+
+                p.project_id,
                 p.project_name,
+                p.project_category_id,  -- directly from project table
+
                 tk.task_name,
                 t.team_name,
+
                 (twt.production / NULLIF(twt.tenure_target, 0)) AS billable_hours
+
             FROM task_work_tracker twt
-            LEFT JOIN tfs_user u ON u.user_id = twt.user_id
-            LEFT JOIN project p ON p.project_id = twt.project_id
-            LEFT JOIN task tk ON tk.task_id = twt.task_id
-            LEFT JOIN team t ON u.team_id = t.team_id
+
+            LEFT JOIN tfs_user u 
+                ON u.user_id = twt.user_id
+
+            LEFT JOIN tfs_user am
+                ON am.user_id = u.asst_manager_id
+
+            LEFT JOIN project p 
+                ON p.project_id = twt.project_id
+
+            LEFT JOIN task tk 
+                ON tk.task_id = twt.task_id
+
+            LEFT JOIN team t 
+                ON u.team_id = t.team_id
+
             WHERE twt.is_active != 0
         """
 
@@ -590,7 +632,9 @@ def view_trackers():
             tracker_file_temp = t.get("tracker_file")
             t["tracker_file"] = (tracker_files_url + tracker_file_temp) if tracker_file_temp else None
 
-        # Month-wise summary (your logic, but month_year is normalized now)
+        # -----------------------------
+        # Month-wise Summary
+        # -----------------------------
         user_ids = sorted({t.get("user_id") for t in trackers if t.get("user_id") is not None})
         month_summary = []
 
@@ -601,6 +645,7 @@ def view_trackers():
                 SELECT
                     u.user_id,
                     u.user_name,
+                    u.user_email,
                     m.mon AS month_year,
                     umt.user_monthly_tracker_id,
                     COALESCE(CAST(umt.monthly_target AS DECIMAL(10,2)), 0) AS monthly_target,
@@ -609,7 +654,7 @@ def view_trackers():
                       COALESCE(CAST(umt.monthly_target AS DECIMAL(10,2)), 0)
                       + COALESCE(umt.extra_assigned_hours, 0)
                     ) AS monthly_total_target,
-                    COALESCE((
+                    COALESCE(( 
                       SELECT SUM(twt3.production / NULLIF(twt3.tenure_target, 0))
                       FROM task_work_tracker twt3
                       WHERE twt3.user_id = u.user_id
@@ -620,7 +665,7 @@ def view_trackers():
                       WHEN umt.user_monthly_tracker_id IS NULL THEN NULL
                       ELSE GREATEST(
                              COALESCE(CAST(umt.working_days AS SIGNED), 0)
-                             - COALESCE((
+                             - COALESCE(( 
                                  SELECT COUNT(DISTINCT DATE(CAST(twt2.date_time AS DATETIME)))
                                  FROM task_work_tracker twt2
                                  WHERE twt2.user_id = u.user_id
@@ -635,7 +680,7 @@ def view_trackers():
                       WHEN umt.user_monthly_tracker_id IS NULL THEN NULL
                       WHEN GREATEST(
                              COALESCE(CAST(umt.working_days AS SIGNED), 0)
-                             - COALESCE((
+                             - COALESCE(( 
                                  SELECT COUNT(DISTINCT DATE(CAST(twt2.date_time AS DATETIME)))
                                  FROM task_work_tracker twt2
                                  WHERE twt2.user_id = u.user_id
@@ -651,7 +696,7 @@ def view_trackers():
                             COALESCE(CAST(umt.monthly_target AS DECIMAL(10,2)), 0)
                             + COALESCE(umt.extra_assigned_hours, 0)
                           )
-                          - COALESCE((
+                          - COALESCE(( 
                               SELECT SUM(twt3.production / NULLIF(twt3.tenure_target, 0))
                               FROM task_work_tracker twt3
                               WHERE twt3.user_id = u.user_id
@@ -662,7 +707,7 @@ def view_trackers():
                         / NULLIF(
                             GREATEST(
                               COALESCE(CAST(umt.working_days AS SIGNED), 0)
-                              - COALESCE((
+                              - COALESCE(( 
                                   SELECT COUNT(DISTINCT DATE(CAST(twt2.date_time AS DATETIME)))
                                   FROM task_work_tracker twt2
                                   WHERE twt2.user_id = u.user_id
@@ -773,18 +818,20 @@ def view_daily_trackers():
         #     cursor.execute("SELECT DATE_FORMAT(CURDATE(), '%b%Y') AS m")
         #     month_year = normalize_month_year((cursor.fetchone() or {}).get("m") or "")
 
+        # ---------- Smart Month Detection ----------
         month_year = None
 
-        # 1️⃣ If date filter is given → derive month from date_from
-        if data.get("date_from"):
+        # 1️⃣ If date filter exists → derive month from date_to OR date_from
+        if data.get("date_from") or data.get("date_to"):
             try:
-                df = str(data["date_from"])[:10]  # YYYY-MM-DD
-                dt_obj = datetime.strptime(df, "%Y-%m-%d")
+                ref_date = data.get("date_to") or data.get("date_from")
+                ref_date = str(ref_date)[:10]  # ensure YYYY-MM-DD
+                dt_obj = datetime.strptime(ref_date, "%Y-%m-%d")
                 month_year = dt_obj.strftime("%b%Y")
             except Exception:
                 month_year = None
 
-        # 2️⃣ Else use month_year from request
+        # 2️⃣ Else use explicit month_year
         if not month_year:
             month_year = normalize_month_year(data.get("month_year"))
 
@@ -792,6 +839,8 @@ def view_daily_trackers():
         if not month_year:
             cursor.execute("SELECT DATE_FORMAT(CURDATE(), '%b%Y') AS m")
             month_year = normalize_month_year((cursor.fetchone() or {}).get("m") or "")
+        
+        
         # -------- Role check
         cursor.execute(
             """
@@ -829,7 +878,7 @@ def view_daily_trackers():
         if data.get("task_id"):
             where += " AND twt.task_id=%s"
             params.append(data["task_id"])
-
+            
         if data.get("shift"):
             where += " AND twt.shift = %s"
             params.append(data["shift"].upper())

@@ -153,24 +153,108 @@ def delete_project_category():
 # ---------------- LIST PROJECT CATEGORIES ---------------- #
 @project_category_bp.route("/list", methods=["POST"])
 def list_project_categories():
+    data = request.get_json(silent=True) or {}
+    project_category_id = data.get("project_category_id")
+
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
     try:
-        cursor.execute(
-            """
-            SELECT project_category_id, project_category_name, afd_id, created_date, updated_date
-            FROM project_category
-            WHERE is_active = 1
-            ORDER BY project_category_name
-            """
-        )
-        result = cursor.fetchall()
+        query = """
+            SELECT 
+                pc.project_category_id,
+                pc.project_category_name,
 
-        return api_response(200, "Project categories fetched successfully", result)
+                a.afd_id,
+                a.afd_name,
+
+                q.qc_afd_id,
+                q.afd_name AS qc_afd_name,
+                q.afd_points,
+                q.afd_category_id
+
+            FROM project_category pc
+            INNER JOIN afd a 
+                ON a.afd_id = pc.afd_id 
+                AND a.is_active = 1
+
+            LEFT JOIN qc_afd q 
+                ON q.afd_id = a.afd_id
+
+            WHERE pc.is_active = 1
+        """
+
+        params = []
+
+        # 🔥 Project Category Filter
+        if project_category_id:
+            query += " AND pc.project_category_id = %s"
+            params.append(project_category_id)
+
+        query += " ORDER BY pc.project_category_name, a.afd_name, q.qc_afd_id"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        if not rows:
+            return api_response(200, "No data found", [])
+
+        # -----------------------------
+        # Build Nested Structure
+        # -----------------------------
+        result = {}
+
+        for row in rows:
+            pc_id = row["project_category_id"]
+            afd_id = row["afd_id"]
+            qc_id = row["qc_afd_id"]
+
+            if pc_id not in result:
+                result[pc_id] = {
+                    "project_category_id": pc_id,
+                    "project_category_name": row["project_category_name"],
+                    "afd": {}
+                }
+
+            if afd_id not in result[pc_id]["afd"]:
+                result[pc_id]["afd"][afd_id] = {
+                    "afd_id": afd_id,
+                    "afd_name": row["afd_name"],
+                    "afd_categories": {}
+                }
+
+            if qc_id:
+                qc_data = {
+                    "qc_afd_id": qc_id,
+                    "qc_afd_name": row["qc_afd_name"],
+                    "afd_points": row["afd_points"],
+                    "afd_sub_categories": []
+                }
+
+                # Main Category
+                if row["afd_category_id"] == 0:
+                    result[pc_id]["afd"][afd_id]["afd_categories"][qc_id] = qc_data
+                else:
+                    parent_id = row["afd_category_id"]
+                    if parent_id in result[pc_id]["afd"][afd_id]["afd_categories"]:
+                        result[pc_id]["afd"][afd_id]["afd_categories"][parent_id]["afd_sub_categories"].append(qc_data)
+
+        # Convert dict to list
+        final_result = []
+        for pc in result.values():
+            afd_list = []
+            for afd in pc["afd"].values():
+                afd["afd_categories"] = list(afd["afd_categories"].values())
+                afd_list.append(afd)
+
+            pc["afd"] = afd_list
+            final_result.append(pc)
+
+        return api_response(200, "Data fetched successfully", final_result)
 
     except Exception as e:
-        return api_response(500, f"Failed to fetch project categories: {str(e)}")
+        return api_response(500, f"Failed to fetch data: {str(e)}")
+
     finally:
         cursor.close()
         conn.close()

@@ -331,7 +331,7 @@ def update_project():
 
 # ---------------- DELETE PROJECT (soft delete + remove all files) ---------------- #
 
-@project_bp.route("/delete", methods=["PUT"])
+@project_bp.route("/delete", methods=["PUT","POST"])
 def delete_project():
     data = request.get_json(silent=True) or {}
     project_id = data.get("project_id")
