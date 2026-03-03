@@ -65,7 +65,14 @@ def health():
 def serve_uploads(filename):
     from config import UPLOAD_FOLDER
     from flask import send_from_directory
-    return send_from_directory(UPLOAD_FOLDER, filename)
+    # return send_from_directory(UPLOAD_FOLDER, filename)
+    
+    """Serve uploads folder even on localhost using /python/uploads URL"""
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    if os.path.exists(file_path):
+        return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+    else:
+        abort(404)
 
 if __name__ == "__main__":
     # Start the scheduler
