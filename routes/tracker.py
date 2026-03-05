@@ -1,15 +1,13 @@
-from flask import Blueprint, request, url_for
-from config import get_db_connection, BASE_UPLOAD_URL, UPLOAD_SUBDIRS, UPLOAD_FOLDER
+from flask import Blueprint, request
+from config import get_db_connection
 from utils.response import api_response
-from utils.file_utils import save_base64_file  # kept (not used now in update)
 from utils.api_log_utils import log_api_call
+from utils.cloudinary_utils import upload_to_cloudinary, delete_from_cloudinary, FOLDER_TRACKER
 from datetime import datetime, timedelta
 import re
 import os
 
 tracker_bp = Blueprint("tracker", __name__)
-
-UPLOAD_URL_PREFIX = "/uploads"
 
 
 # ------------------------
@@ -95,56 +93,17 @@ def build_tracker_filename(project_code: str, task_name: str, user_name: str, or
     )
 
 
-def get_tracker_file_path(filename: str) -> str:
-    # physical path for tracker file
-    return os.path.join(UPLOAD_FOLDER, UPLOAD_SUBDIRS["TRACKER_FILES"], filename)
-
-def safe_remove_tracker_file(filename: str) -> bool:
+def safe_delete_cloudinary_tracker(url_or_public_id: str) -> None:
     """
-    Deletes file from tracker_files folder if exists.
-    Returns True if deleted, False if not found / nothing deleted.
+    Silently delete a tracker file from Cloudinary.
+    Errors are logged but never surface to the caller.
     """
-    if not filename:
-        return False
-
-    file_path = get_tracker_file_path(filename)
-
-    # Safety: ensure deletion stays inside tracker_files directory
-    tracker_dir = os.path.abspath(os.path.join(UPLOAD_FOLDER, UPLOAD_SUBDIRS["TRACKER_FILES"]))
-    abs_path = os.path.abspath(file_path)
-    if not abs_path.startswith(tracker_dir + os.sep):
-        # prevents path traversal like ../../something
-        raise ValueError("Invalid file path")
-    print("Deleting file at:", abs_path)
-    if os.path.exists(abs_path):
-        os.remove(abs_path)
-        return True
-
-    return False
-
-def safe_remove_tracker_file(filename: str) -> bool:
-    """
-    Deletes file from uploads/<TRACKER_FILES>/ if exists.
-    Works even if DB stored a URL/path (we basename it).
-    """
-    if not filename:
-        return False
-
-    # ✅ normalize in case DB stored URL/path
-    filename = os.path.basename(str(filename))
-
-    tracker_dir = os.path.abspath(os.path.join(UPLOAD_FOLDER, UPLOAD_SUBDIRS["TRACKER_FILES"]))
-    abs_path = os.path.abspath(os.path.join(tracker_dir, filename))
-
-    # ✅ safety: ensure deletion stays inside tracker_dir
-    if not abs_path.startswith(tracker_dir + os.sep):
-        raise ValueError(f"Invalid file path: {abs_path}")
-
-    if os.path.exists(abs_path):
-        os.remove(abs_path)
-        return True
-
-    return False
+    if not url_or_public_id:
+        return
+    try:
+        delete_from_cloudinary(url_or_public_id, resource_type="raw")
+    except Exception as e:
+        print(f"Cloudinary tracker delete failed: {e} | ref={url_or_public_id}")
 
 # ------------------------
 # ADD TRACKER  (multipart + custom filename)
@@ -197,16 +156,21 @@ def add_tracker():
         usr_row = cursor.fetchone() or {}
         user_name = usr_row.get("user_name") or "USER"
 
-        # ✅ file save (multipart)
+        # ✅ file upload to Cloudinary
         tracker_file = None
         uploaded = request.files.get("tracker_file")
         if uploaded and uploaded.filename:
             try:
-                from utils.file_utils import save_uploaded_file  # generic
                 custom_name = build_tracker_filename(project_code, task_name, user_name, uploaded.filename)
-                tracker_file = save_uploaded_file(uploaded, UPLOAD_SUBDIRS["TRACKER_FILES"], custom_name)
+                # public_id includes extension (raw resource)
+                cloudinary_url, _ = upload_to_cloudinary(
+                    uploaded, FOLDER_TRACKER, display_name=custom_name, resource_type="raw"
+                )
+                tracker_file = cloudinary_url
             except ValueError as e:
                 return api_response(400, str(e))
+            except Exception as e:
+                return api_response(500, f"File upload failed: {str(e)}")
 
         # now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if now_str is None:
@@ -316,26 +280,17 @@ def update_tracker():
 
             custom_filename = build_tracker_filename(project_code, task_name, user_name, uploaded.filename)
 
-            from utils.file_utils import save_uploaded_file
+            # ✅ Upload new file to Cloudinary first
+            cloudinary_url, _ = upload_to_cloudinary(
+                uploaded, FOLDER_TRACKER, display_name=custom_filename, resource_type="raw"
+            )
+            new_file_saved = cloudinary_url
 
-            # ✅ Save new file first
-            new_file = save_uploaded_file(uploaded, UPLOAD_SUBDIRS["TRACKER_FILES"], custom_filename)
-            new_file_saved = new_file
+            # ✅ Delete old Cloudinary file (only if it differs)
+            if old_file and old_file != cloudinary_url:
+                safe_delete_cloudinary_tracker(old_file)
 
-            # ✅ Delete old file (only if old exists AND not same)
-            try:
-                if old_file:
-                    old_file_norm = os.path.basename(str(old_file))
-                else:
-                    old_file_norm = None
-
-                if old_file_norm and old_file_norm != new_file:
-                    safe_remove_tracker_file(old_file_norm)
-            except Exception as e:
-                # DO NOT fail update if old deletion fails, but don't hide it
-                print("DELETE FAILED (update):", str(e), " old_file=", old_file)
-
-            tracker_file = new_file
+            tracker_file = cloudinary_url
 
         # updated_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         now = datetime.now()
@@ -393,21 +348,15 @@ def update_tracker():
 
     except ValueError as e:
         conn.rollback()
-        # rollback: if file was saved but DB update failed, remove newly saved file
+        # rollback: if Cloudinary upload succeeded but DB failed, delete newly uploaded file
         if new_file_saved:
-            try:
-                safe_remove_tracker_file(new_file_saved)
-            except Exception:
-                pass
+            safe_delete_cloudinary_tracker(new_file_saved)
         return api_response(400, str(e))
 
     except Exception as e:
         conn.rollback()
         if new_file_saved:
-            try:
-                safe_remove_tracker_file(new_file_saved)
-            except Exception:
-                pass
+            safe_delete_cloudinary_tracker(new_file_saved)
         return api_response(500, f"Failed to update tracker: {str(e)}")
 
     finally:
@@ -444,15 +393,8 @@ def delete_tracker():
         )
         conn.commit()
 
-        # ✅ delete physical file
-        try:
-            f = tracker.get("tracker_file")
-            if f:
-                f = os.path.basename(str(f))
-            if f:
-                safe_remove_tracker_file(f)
-        except Exception as e:
-            print("DELETE FAILED (delete api):", str(e), " file=", tracker.get("tracker_file"))
+        # ✅ delete from Cloudinary
+        safe_delete_cloudinary_tracker(tracker.get("tracker_file"))
 
         device_id = data.get("device_id")
         device_type = data.get("device_type")
@@ -627,15 +569,10 @@ def view_trackers():
         cursor.execute(query, tuple(params))
         trackers = cursor.fetchall()
 
-        # tracker_files_url = f"{BASE_UPLOAD_URL}/{UPLOAD_SUBDIRS['TRACKER_FILES']}/"
-        # tracker_files_url = f"{UPLOAD_FOLDER}/{UPLOAD_SUBDIRS['TRACKER_FILES']}/"
+        # tracker_file is now a Cloudinary URL stored directly in DB — return as-is
         for t in trackers:
-            tracker_file_temp = t.get("tracker_file")
-            if tracker_file_temp:
-                t["tracker_file"] = url_for("serve_uploads", filename=tracker_file_temp, _external=True)
-            else:
+            if not t.get("tracker_file"):
                 t["tracker_file"] = None
-            # t["tracker_file"] = (tracker_files_url + tracker_file_temp) if tracker_file_temp else None
 
         # -----------------------------
         # Month-wise Summary

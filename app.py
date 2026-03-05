@@ -1,4 +1,4 @@
-from flask import Flask,send_file, abort
+from flask import Flask
 from routes.auth import auth_bp
 from routes.user import user_bp
 from routes.project import project_bp
@@ -15,7 +15,6 @@ from routes.password_reset import password_reset_bp
 from routes.qc import qc_bp
 from routes.qc_afd import qc_afd_bp
 from scheduler import start_scheduler
-from config import UPLOAD_FOLDER, UPLOAD_SUBDIRS
 
 
 from flask_cors import CORS
@@ -62,44 +61,7 @@ def home():
 def health():
     return "OK", 200
 
-@app.route("/uploads/tracker_files/<path:filename>")
-def serve_uploads(filename):
-    # from config import UPLOAD_FOLDER
-    # from flask import send_from_directory
-    # return send_from_directory(UPLOAD_FOLDER, filename)
-
-    """
-    Serve tracker file for download.
-    filename = only the file name stored in DB
-    """
-    # Absolute path to the file
-    file_path = os.path.join(UPLOAD_FOLDER, UPLOAD_SUBDIRS["TRACKER_FILES"], filename)
-
-    if os.path.exists(file_path):
-        # Use send_file instead of send_from_directory
-        return send_file(file_path, as_attachment=True)
-    else:
-        print(f"File not found: {file_path}")
-        abort(404)
-
-@app.route("/downloads/tracker/<filename>")
-def download_tracker_file(filename):
-    """
-    Serve tracker file for download.
-    filename = only the file name stored in DB
-    """
-    # Absolute path to the file
-    file_path = os.path.join(UPLOAD_FOLDER, UPLOAD_SUBDIRS["TRACKER_FILES"], filename)
-
-    if os.path.exists(file_path):
-        # Use send_file instead of send_from_directory
-        return send_file(file_path, as_attachment=True)
-    else:
-        print(f"File not found: {file_path}")
-        abort(404)
-
 if __name__ == "__main__":
     # Start the scheduler
     start_scheduler()
-    # app.run(debug=True)
     app.run(host="0.0.0.0", port=5000, debug=True)
