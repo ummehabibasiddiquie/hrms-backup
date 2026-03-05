@@ -56,8 +56,9 @@ def upload_to_cloudinary(source, folder: str, display_name: str = None, resource
     """
     # Build a stable public_id so the URL is predictable
     stem = display_name or str(uuid.uuid4())
-    public_id = f"{folder}/{stem}"
-
+    # Note: Using the explicit `folder` argument ensures Cloudinary places
+    # the file in the correct visual folder in their Media Library GUI.
+    
     # Accept both FileStorage and file paths
     if hasattr(source, "read"):
         # werkzeug FileStorage
@@ -67,8 +68,8 @@ def upload_to_cloudinary(source, folder: str, display_name: str = None, resource
 
     result = cloudinary.uploader.upload(
         data,
-        folder=None,           # we embed folder in public_id ourselves
-        public_id=public_id,
+        folder=folder,           # Explicit folder assignment
+        public_id=stem,          # Just the filename stem
         resource_type=resource_type,
         use_filename=False,
         unique_filename=False,
