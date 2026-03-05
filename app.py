@@ -62,11 +62,25 @@ def home():
 def health():
     return "OK", 200
 
-@app.route("/uploads/<path:filename>")
+@app.route("/uploads/tracker_files/<path:filename>")
 def serve_uploads(filename):
-    from config import UPLOAD_FOLDER
-    from flask import send_from_directory
-    return send_from_directory(UPLOAD_FOLDER, filename)
+    # from config import UPLOAD_FOLDER
+    # from flask import send_from_directory
+    # return send_from_directory(UPLOAD_FOLDER, filename)
+
+    """
+    Serve tracker file for download.
+    filename = only the file name stored in DB
+    """
+    # Absolute path to the file
+    file_path = os.path.join(UPLOAD_FOLDER, UPLOAD_SUBDIRS["TRACKER_FILES"], filename)
+
+    if os.path.exists(file_path):
+        # Use send_file instead of send_from_directory
+        return send_file(file_path, as_attachment=True)
+    else:
+        print(f"File not found: {file_path}")
+        abort(404)
 
 @app.route("/downloads/tracker/<filename>")
 def download_tracker_file(filename):

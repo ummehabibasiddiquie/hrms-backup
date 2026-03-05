@@ -632,7 +632,7 @@ def view_trackers():
         for t in trackers:
             tracker_file_temp = t.get("tracker_file")
             if tracker_file_temp:
-                t["tracker_file"] = url_for("download_tracker_file", filename=tracker_file_temp, _external=True)
+                t["tracker_file"] = url_for("serve_uploads", filename=tracker_file_temp, _external=True)
             else:
                 t["tracker_file"] = None
             # t["tracker_file"] = (tracker_files_url + tracker_file_temp) if tracker_file_temp else None
