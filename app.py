@@ -43,10 +43,10 @@ app.register_blueprint(password_reset_bp, url_prefix="/password_reset")
 app.register_blueprint(qc_bp, url_prefix="/qc")
 app.register_blueprint(qc_afd_bp, url_prefix="/qc_afd")
 
-print("\n==== REGISTERED ROUTES ====")
-for r in app.url_map.iter_rules():
-    print(r, r.methods)
-print("==== END ROUTES ====\n")
+# print("\n==== REGISTERED ROUTES ====")
+# for r in app.url_map.iter_rules():
+#     print(r, r.methods)
+# print("==== END ROUTES ====\n")
 
 
 # CORS(app, supports_credentials=True)

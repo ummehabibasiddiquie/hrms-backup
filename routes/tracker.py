@@ -416,6 +416,7 @@ def delete_tracker():
 # ------------------------
 @tracker_bp.route("/view", methods=["POST"])
 def view_trackers():
+    print("Received view_trackers request with data:", request.get_json())
     data = request.get_json() or {}
 
     conn = get_db_connection()
@@ -477,20 +478,17 @@ def view_trackers():
 
             FROM task_work_tracker twt
 
-            LEFT JOIN tfs_user u 
-                ON u.user_id = twt.user_id
+            LEFT JOIN tfs_user u ON u.user_id = twt.user_id
 
-            LEFT JOIN tfs_user am
-                ON am.user_id = u.asst_manager_id
+            LEFT JOIN tfs_user am 
+            ON (
+                u.asst_manager_id = am.user_id
+                OR JSON_CONTAINS(u.asst_manager_id, CONCAT('[', am.user_id, ']'))
+            )
 
-            LEFT JOIN project p 
-                ON p.project_id = twt.project_id
-
-            LEFT JOIN task tk 
-                ON tk.task_id = twt.task_id
-
-            LEFT JOIN team t 
-                ON u.team_id = t.team_id
+            LEFT JOIN project p ON p.project_id = twt.project_id
+            LEFT JOIN task tk ON tk.task_id = twt.task_id
+            LEFT JOIN team t ON u.team_id = t.team_id
 
             WHERE twt.is_active != 0
         """
@@ -526,9 +524,9 @@ def view_trackers():
                                 OR tu.asst_manager_id = %s
                                 OR tu.qa_id = %s
                                 OR tu.user_id = %s
-                                OR FIND_IN_SET(%s, {cleaned_csv_col("tu.project_manager_id")}) > 0
-                                OR FIND_IN_SET(%s, {cleaned_csv_col("tu.asst_manager_id")}) > 0
-                                OR FIND_IN_SET(%s, {cleaned_csv_col("tu.qa_id")}) > 0
+                                OR JSON_CONTAINS(tu.project_manager_id, JSON_ARRAY(%s))
+                                OR JSON_CONTAINS(tu.asst_manager_id, JSON_ARRAY(%s))
+                                OR JSON_CONTAINS(tu.qa_id, JSON_ARRAY(%s))
                           )
                     )
                 """
@@ -862,9 +860,9 @@ def view_daily_trackers():
                                 OR tu.asst_manager_id = %s
                                 OR tu.qa_id = %s
                                 OR tu.user_id = %s
-                                OR FIND_IN_SET(%s, {cleaned_csv_col("tu.project_manager_id")}) > 0
-                                OR FIND_IN_SET(%s, {cleaned_csv_col("tu.asst_manager_id")}) > 0
-                                OR FIND_IN_SET(%s, {cleaned_csv_col("tu.qa_id")}) > 0
+                                OR JSON_CONTAINS(tu.project_manager_id, JSON_ARRAY(%s))
+                                OR JSON_CONTAINS(tu.asst_manager_id, JSON_ARRAY(%s))
+                                OR JSON_CONTAINS(tu.qa_id, JSON_ARRAY(%s))
                           )
                     )
                 """
