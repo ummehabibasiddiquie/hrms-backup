@@ -14,6 +14,7 @@ from routes.api_log_list import api_log_list_bp
 from routes.password_reset import password_reset_bp
 from routes.qc import qc_bp
 from routes.qc_afd import qc_afd_bp
+from routes.qc_audit import qc_audit_bp
 from scheduler import start_scheduler
 
 
@@ -42,11 +43,12 @@ app.register_blueprint(api_log_list_bp, url_prefix="/api_log_list")
 app.register_blueprint(password_reset_bp, url_prefix="/password_reset")
 app.register_blueprint(qc_bp, url_prefix="/qc")
 app.register_blueprint(qc_afd_bp, url_prefix="/qc_afd")
+app.register_blueprint(qc_audit_bp, url_prefix="/qc_audit")
 
-# print("\n==== REGISTERED ROUTES ====")
-# for r in app.url_map.iter_rules():
-#     print(r, r.methods)
-# print("==== END ROUTES ====\n")
+print("\n==== REGISTERED ROUTES ====")
+for r in app.url_map.iter_rules():
+    print(r, r.methods)
+print("==== END ROUTES ====\n")
 
 
 # CORS(app, supports_credentials=True)
