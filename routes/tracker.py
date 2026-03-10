@@ -530,6 +530,12 @@ def view_trackers():
         if data.get("is_active") is not None:
             query += " AND twt.is_active=%s"
             params.append(data["is_active"])
+        if data.get("qc_pending") is not None:
+            query += " AND twt.qc_status = %s"
+            params.append(data["qc_pending"])
+
+            # ensure tracker file exists
+            query += " AND twt.tracker_file IS NOT NULL AND twt.tracker_file != ''"
 
         query += " ORDER BY CAST(twt.date_time AS DATETIME) DESC"
         cursor.execute(query, tuple(params))
