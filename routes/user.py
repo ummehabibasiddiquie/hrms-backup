@@ -230,6 +230,10 @@ def list_users():
             params.append(str(int(user_id)))   # exact match
             params.append(str(int(user_id)))   # FIND_IN_SET
 
+        if data.get("is_active") is not None:
+            query += " AND u.is_active = %s"
+            params.append(data.get("is_active"))
+
         query += " ORDER BY u.user_id DESC"
 
         cursor.execute(query, tuple(params))
