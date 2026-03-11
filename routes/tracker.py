@@ -521,7 +521,7 @@ def view_trackers():
             df = data["date_from"]
             if len(df) == 10: df += " 00:00:00"
             query += " AND CAST(twt.date_time AS DATETIME) >= %s"
-            params.append(df)
+            params.append(df)   
         if data.get("date_to"):
             dt_ = data["date_to"]
             if len(dt_) == 10: dt_ += " 23:59:59"
