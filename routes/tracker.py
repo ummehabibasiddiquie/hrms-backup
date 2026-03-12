@@ -1,5 +1,5 @@
 from flask import Blueprint, request
-from config import get_db_connection, BASE_UPLOAD_URL, UPLOAD_SUBDIRS
+from config import get_db_connection
 from utils.response import api_response
 from utils.api_log_utils import log_api_call
 from utils.cloudinary_utils import upload_to_cloudinary, delete_from_cloudinary, FOLDER_TRACKER
@@ -543,19 +543,11 @@ def view_trackers():
         trackers = cursor.fetchall()
 
         # Normalize tracker_file
-        tracker_files_url = f"{BASE_UPLOAD_URL}/{UPLOAD_SUBDIRS['TRACKER_FILES']}/"
         for t in trackers:
             file_path = t.get("tracker_file")
 
             if not file_path:
                 t["tracker_file"] = None
-            elif "://" in tracker_file_temp.lower() or tracker_file_temp.startswith(BASE_UPLOAD_URL):
-                # If it's already an absolute URL or already has our prefix, don't add it again
-                t["tracker_file"] = tracker_file_temp
-            else:
-                t["tracker_file"] = tracker_files_url + tracker_file_temp
-            
-            # print(f"DEBUG: Normalized to: '{t['tracker_file']}'")
                 continue
 
             # If already cloudinary URL, keep as is
